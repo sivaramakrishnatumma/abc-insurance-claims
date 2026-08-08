@@ -8,7 +8,7 @@
 
 ---
 
-## 0. Problem Statement
+## Problem Statement
 
 ABC Insurance is modernizing a legacy claims system. The front-end must:
 
