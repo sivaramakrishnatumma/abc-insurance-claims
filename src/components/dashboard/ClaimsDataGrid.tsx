@@ -210,8 +210,21 @@ export function ClaimsDataGrid() {
       {/* Virtualized rows */}
       <div ref={parentRef} className='scrollbar-thin h-[600px] overflow-y-auto'>
         {isProcessing && claims.length === 0 ? (
-          <div className='grid h-full place-items-center text-sm text-slate-400'>
-            Loading claims…
+          <div>
+            {Array.from({ length: 10 }).map((_, i) => (
+              <div
+                key={i}
+                className={`${GRID_COLS} border-b border-slate-50`}
+                style={{ height: ROW_HEIGHT }}
+              >
+                <span className='h-3 w-3/4 animate-pulse rounded bg-slate-200' />
+                <span className='h-3 w-1/2 animate-pulse rounded bg-slate-200' />
+                <span className='h-3 w-5/6 animate-pulse rounded bg-slate-200' />
+                <span className='ml-auto h-3 w-1/2 animate-pulse rounded bg-slate-200' />
+                <span className='h-5 w-16 animate-pulse rounded-lg bg-slate-200' />
+                <span className='h-6 w-20 animate-pulse rounded-lg bg-slate-200' />
+              </div>
+            ))}
           </div>
         ) : claims.length === 0 ? (
           <div className='grid h-full place-items-center text-sm text-slate-400'>

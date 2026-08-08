@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Scissors,
   Combine,
@@ -6,6 +6,9 @@ import {
   Trash2,
   CheckCircle2,
   Lock,
+  X,
+  AlertTriangle,
+  RotateCcw,
   type LucideIcon,
 } from 'lucide-react';
 import { usePermissions, type PermissionAction } from '../../store/RBACContext';
@@ -79,22 +82,30 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
   const [activeOp, setActiveOp] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [completed, setCompleted] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [lastOp, setLastOp] = useState<PageOperation | null>(null);
   const workerRef = useRef<Worker | null>(null);
   // Holds the op currently running so the worker's onmessage can resolve it.
   const activeOpRef = useRef<PageOperation | null>(null);
 
-  useEffect(() => {
-    // Vite resolves this URL form to a bundled module worker.
+  // Creates a fresh module worker and wires its message handling.
+  const attachWorker = useCallback(() => {
     const worker = new Worker(
       new URL('../../workers/documentProcessor.worker.ts', import.meta.url),
       { type: 'module' },
     );
-    workerRef.current = worker;
 
     worker.onmessage = (event: MessageEvent<DocumentWorkerResponse>) => {
       const msg = event.data;
       if (msg.status === 'PROGRESS') {
         setProgress(msg.progress);
+        return;
+      }
+      if (msg.status === 'FAILED') {
+        setActiveOp(null);
+        setProgress(0);
+        setError(msg.error);
+        activeOpRef.current = null;
         return;
       }
       // COMPLETE: surface the simulated payload from the worker.
@@ -111,16 +122,24 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
       activeOpRef.current = null;
     };
 
+    workerRef.current = worker;
+    return worker;
+  }, []);
+
+  useEffect(() => {
+    const worker = attachWorker();
     // Terminate on unmount to avoid leaking the worker thread.
     return () => worker.terminate();
-  }, []);
+  }, [attachWorker]);
 
   const runOperation = (op: PageOperation) => {
     if (activeOpRef.current) return;
     setCompleted(null);
+    setError(null);
     setActiveOp(op.id);
     setProgress(0);
     activeOpRef.current = op;
+    setLastOp(op);
 
     // Offload the heavy job to the worker; the main thread stays at 60 FPS.
     const request: DocumentWorkerRequest = {
@@ -129,6 +148,19 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
       sizeBytes: ONE_GB,
     };
     workerRef.current?.postMessage(request);
+  };
+
+  // Safe cancel: kill the running worker and spin up a clean replacement.
+  const cancelOperation = () => {
+    workerRef.current?.terminate();
+    attachWorker();
+    activeOpRef.current = null;
+    setActiveOp(null);
+    setProgress(0);
+  };
+
+  const retry = () => {
+    if (lastOp) runOperation(lastOp);
   };
 
   return (
@@ -187,11 +219,21 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
 
             {isRunning && (
               <div className='mt-3'>
-                <div className='h-1.5 w-full overflow-hidden rounded-full bg-slate-100'>
-                  <div
-                    className='h-full rounded-full bg-brand-500 transition-[width] duration-100'
-                    style={{ width: `${progress}%` }}
-                  />
+                <div className='flex items-center gap-2'>
+                  <div className='h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100'>
+                    <div
+                      className='h-full rounded-full bg-brand-500 transition-[width] duration-100'
+                      style={{ width: `${progress}%` }}
+                    />
+                  </div>
+                  <button
+                    type='button'
+                    onClick={cancelOperation}
+                    className='flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-rose-600'
+                  >
+                    <X className='h-3 w-3' />
+                    Cancel
+                  </button>
                 </div>
                 <p className='mt-1 text-right text-[11px] text-slate-400'>
                   {Math.round(progress)}%
@@ -208,6 +250,23 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
           </div>
         );
       })}
+
+      {error && (
+        <div className='rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-600'>
+          <div className='flex items-center gap-2'>
+            <AlertTriangle className='h-4 w-4 shrink-0' />
+            <span className='flex-1'>{error}</span>
+            <button
+              type='button'
+              onClick={retry}
+              className='flex items-center gap-1 rounded-md bg-rose-500 px-2.5 py-1 text-xs font-semibold text-white transition hover:bg-rose-600'
+            >
+              <RotateCcw className='h-3 w-3' />
+              Retry
+            </button>
+          </div>
+        </div>
+      )}
 
       {completed && (
         <div className='flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-600'>

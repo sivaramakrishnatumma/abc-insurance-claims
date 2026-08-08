@@ -52,11 +52,22 @@ ctx.onmessage = (event) => {
   const { requestId, search, sortKey } = event.data;
   const { claims, activeCount } = processClaims(search, sortKey);
 
-  const response: ProcessResponse = {
-    requestId,
-    claims,
-    total: dataset.length,
-    activeCount,
-  };
-  ctx.postMessage(response);
+  setTimeout(() => {
+    // Simulate a 1000ms delay to mimic a real-world API call.
+    const response: ProcessResponse = {
+      requestId,
+      claims,
+      total: dataset.length,
+      activeCount,
+    };
+    ctx.postMessage(response);
+  }, 1000);
+
+  // const response: ProcessResponse = {
+  //   requestId,
+  //   claims,
+  //   total: dataset.length,
+  //   activeCount,
+  // };
+  // ctx.postMessage(response);
 };

@@ -22,9 +22,24 @@ ctx.onmessage = (event) => {
   const start = performance.now();
   let progress = 0;
 
+  // ~15% of Split/Merge jobs fail mid-flight to exercise the retry path.
+  const canFail = action === 'SPLIT_DOCUMENT' || action === 'MERGE_PAGES';
+  const willFail = canFail && Math.random() < 0.15;
+
   // Drive a fake progress loop; each tick reports back to the main thread.
   const timer = setInterval(() => {
     progress = Math.min(100, progress + STEP);
+
+    if (willFail && progress >= 60) {
+      clearInterval(timer);
+      ctx.postMessage({
+        status: 'FAILED',
+        action,
+        error: 'Operation failed due to server timeout',
+      });
+      return;
+    }
+
     ctx.postMessage({ status: 'PROGRESS', action, progress });
 
     if (progress >= 100) {

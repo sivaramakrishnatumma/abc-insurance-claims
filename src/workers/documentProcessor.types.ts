@@ -30,6 +30,14 @@ export interface DocumentCompleteMessage {
   };
 }
 
+/** Emitted when a simulated heavy operation fails mid-flight. */
+export interface DocumentFailedMessage {
+  status: 'FAILED';
+  action: DocumentActionType;
+  error: string;
+}
+
 export type DocumentWorkerResponse =
   | DocumentProgressMessage
-  | DocumentCompleteMessage;
+  | DocumentCompleteMessage
+  | DocumentFailedMessage;
