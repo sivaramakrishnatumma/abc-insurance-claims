@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import './index.css';
 import App from './App.tsx';
-import { RBACProvider } from './context/RBACContext';
+import { RBACProvider } from './store/RBACContext';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

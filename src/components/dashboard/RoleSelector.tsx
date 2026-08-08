@@ -1,5 +1,5 @@
 import { ShieldCheck, Eye } from 'lucide-react';
-import { usePermissions, type Role } from '../../context/RBACContext';
+import { usePermissions, type Role } from '../../store/RBACContext';
 
 const ROLES: { value: Role; label: string; icon: typeof Eye }[] = [
   { value: 'Adjudicator', label: 'Adjudicator', icon: ShieldCheck },

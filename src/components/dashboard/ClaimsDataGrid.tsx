@@ -10,7 +10,7 @@ import {
   Cpu,
 } from 'lucide-react';
 import { type Claim, type ClaimStatus } from '../../data/mockClaims';
-import { AuthorizedView, usePermissions } from '../../context/RBACContext';
+import { AuthorizedView, usePermissions } from '../../store/RBACContext';
 import { useClaimsProcessor } from '../../hooks/useClaimsProcessor';
 import type { SortKey } from '../../workers/claims.types';
 import { RoleSelector } from './RoleSelector';

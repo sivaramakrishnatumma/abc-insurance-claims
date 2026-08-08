@@ -8,10 +8,7 @@ import {
   Lock,
   type LucideIcon,
 } from 'lucide-react';
-import {
-  usePermissions,
-  type PermissionAction,
-} from '../../context/RBACContext';
+import { usePermissions, type PermissionAction } from '../../store/RBACContext';
 import type {
   DocumentActionType,
   DocumentWorkerRequest,
