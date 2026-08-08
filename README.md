@@ -156,7 +156,7 @@ and giving document operations the full viewport.
 ## Repository Structure
 
 ```text
-abc-insurance-claims-ui/
+abc-insurance-claims/
 ├── .github/                # CI workflow + PR template
 ├── docs/                   # Architecture diagrams (Mermaid)
 ├── src/
