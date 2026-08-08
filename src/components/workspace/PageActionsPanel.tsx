@@ -12,6 +12,11 @@ import {
   usePermissions,
   type PermissionAction,
 } from '../../context/RBACContext';
+import type {
+  DocumentActionType,
+  DocumentWorkerRequest,
+  DocumentWorkerResponse,
+} from '../../workers/documentProcessor.types';
 
 interface PageActionsPanelProps {
   currentPage: number;
@@ -58,38 +63,75 @@ const OPERATIONS: PageOperation[] = [
   },
 ];
 
+const ONE_GB = 1_073_741_824;
+
+function formatBytes(bytes: number): string {
+  const gb = bytes / ONE_GB;
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  return `${Math.round(bytes / (1024 * 1024))} MB`;
+}
+
+function actionFor(opId: string): DocumentActionType {
+  if (opId === 'split') return 'SPLIT_DOCUMENT';
+  if (opId === 'merge') return 'MERGE_PAGES';
+  return 'PROCESS_CHUNK';
+}
+
 export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
   const { hasPermission } = usePermissions();
   const [activeOp, setActiveOp] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [completed, setCompleted] = useState<string | null>(null);
-  const intervalRef = useRef<number | null>(null);
+  const workerRef = useRef<Worker | null>(null);
+  // Holds the op currently running so the worker's onmessage can resolve it.
+  const activeOpRef = useRef<PageOperation | null>(null);
 
   useEffect(() => {
-    return () => {
-      if (intervalRef.current) window.clearInterval(intervalRef.current);
+    // Vite resolves this URL form to a bundled module worker.
+    const worker = new Worker(
+      new URL('../../workers/documentProcessor.worker.ts', import.meta.url),
+      { type: 'module' },
+    );
+    workerRef.current = worker;
+
+    worker.onmessage = (event: MessageEvent<DocumentWorkerResponse>) => {
+      const msg = event.data;
+      if (msg.status === 'PROGRESS') {
+        setProgress(msg.progress);
+        return;
+      }
+      // COMPLETE: surface the simulated payload from the worker.
+      const op = activeOpRef.current;
+      const detail =
+        msg.action === 'SPLIT_DOCUMENT'
+          ? `${msg.payload.resultFiles} files`
+          : formatBytes(msg.payload.processedBytes);
+      setProgress(100);
+      setActiveOp(null);
+      setCompleted(
+        `${op?.label ?? 'Operation'} completed — processed ${detail} in ${msg.payload.durationMs}ms`,
+      );
+      activeOpRef.current = null;
     };
+
+    // Terminate on unmount to avoid leaking the worker thread.
+    return () => worker.terminate();
   }, []);
 
   const runOperation = (op: PageOperation) => {
-    if (activeOp) return;
+    if (activeOpRef.current) return;
     setCompleted(null);
     setActiveOp(op.id);
     setProgress(0);
+    activeOpRef.current = op;
 
-    // Pessimistic: block interaction until the heavy operation resolves.
-    intervalRef.current = window.setInterval(() => {
-      setProgress((prev) => {
-        const next = prev + 100 / 18;
-        if (next >= 100) {
-          if (intervalRef.current) window.clearInterval(intervalRef.current);
-          setActiveOp(null);
-          setCompleted(op.label);
-          return 100;
-        }
-        return next;
-      });
-    }, 100);
+    // Offload the heavy job to the worker; the main thread stays at 60 FPS.
+    const request: DocumentWorkerRequest = {
+      action: actionFor(op.id),
+      fileName: `page-${currentPage}.pdf`,
+      sizeBytes: ONE_GB,
+    };
+    workerRef.current?.postMessage(request);
   };
 
   return (
@@ -173,7 +215,7 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
       {completed && (
         <div className='flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 px-3 py-2 text-sm text-emerald-600'>
           <CheckCircle2 className='h-4 w-4' />
-          {completed} completed successfully.
+          {completed}
         </div>
       )}
     </div>
