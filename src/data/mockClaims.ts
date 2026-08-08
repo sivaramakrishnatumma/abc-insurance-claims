@@ -171,3 +171,8 @@ export function generateClaims(count: number = TOTAL_RECORDS): Claim[] {
 
 /** Pre-generated dataset of 20,000 claims held in-memory. */
 export const mockClaims: Claim[] = generateClaims();
+
+/** Looks up a single claim by its id (used for workspace deep-links). */
+export function findClaimById(id: string): Claim | undefined {
+  return mockClaims.find((c) => c.id === id);
+}

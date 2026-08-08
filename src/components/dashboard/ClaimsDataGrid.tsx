@@ -1,4 +1,5 @@
 import { useRef, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
   Search,
@@ -65,7 +66,10 @@ function ActionButton({ label, icon: Icon, onClick, tone }: ActionButtonProps) {
   return (
     <button
       type='button'
-      onClick={onClick}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
       title={label}
       aria-label={label}
       className={`grid h-8 w-8 place-items-center rounded-lg transition ${TONE_STYLES[tone]}`}
@@ -124,6 +128,7 @@ export function ClaimsDataGrid() {
   const [search, setSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('newest');
   const parentRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   // Search, filter and sort run in a Web Worker to keep the UI at 60 FPS.
   const { claims, total, activeCount, isProcessing } = useClaimsProcessor(
@@ -224,7 +229,22 @@ export function ClaimsDataGrid() {
               return (
                 <div
                   key={claim.id}
-                  className={`${GRID_COLS} absolute left-0 top-0 w-full border-b border-slate-50 text-sm text-slate-600 hover:bg-slate-50/70`}
+                  role='button'
+                  tabIndex={0}
+                  onClick={() =>
+                    navigate(`/claims/${claim.id}/workspace`, {
+                      state: { claim },
+                    })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      navigate(`/claims/${claim.id}/workspace`, {
+                        state: { claim },
+                      });
+                    }
+                  }}
+                  className={`${GRID_COLS} absolute left-0 top-0 w-full cursor-pointer border-b border-slate-50 text-sm text-slate-600 outline-none hover:bg-slate-50/70 focus-visible:bg-brand-50`}
                   style={{
                     height: `${virtualRow.size}px`,
                     transform: `translateY(${virtualRow.start}px)`,
