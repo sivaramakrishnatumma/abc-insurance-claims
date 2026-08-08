@@ -1,6 +1,7 @@
 import { SideNav } from './components/layout/SideNav';
 import { Header } from './components/layout/Header';
 import { SummaryCards } from './components/dashboard/SummaryCards';
+import { ClaimsDataGrid } from './components/dashboard/ClaimsDataGrid';
 
 function App() {
   return (
@@ -11,11 +12,7 @@ function App() {
         <div className='mx-auto flex max-w-[1400px] flex-col gap-6 px-6 py-8 lg:px-10'>
           <Header userName='Evano' />
           <SummaryCards />
-
-          {/* Data grid placeholder — built in the next step */}
-          <section className='grid min-h-[320px] place-items-center rounded-3xl border border-dashed border-slate-200 bg-white/60 text-sm text-slate-400 shadow-card'>
-            Claims data grid coming in Step 2
-          </section>
+          <ClaimsDataGrid />
         </div>
       </main>
     </div>
