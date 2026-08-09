@@ -22,9 +22,6 @@ services:
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     envVars:
-      # Static sites serve at root, so drop the GitHub Pages subpath.
-      - key: VITE_BASE_PATH
-        value: /
       # Point the frontend at the backend service automatically.
       - key: VITE_API_URL
         fromService:

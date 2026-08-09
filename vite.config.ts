@@ -3,9 +3,13 @@ import react from '@vitejs/plugin-react';
 
 // https://vite.dev/config/
 export default defineConfig({
-  // GitHub Pages serves under a subpath; Render static sites serve at root.
-  base: process.env.VITE_BASE_PATH ?? '/abc-insurance-claims/',
+  // Root by default (Render); GitHub Pages sets VITE_BASE_PATH to its subpath.
+  base: process.env.VITE_BASE_PATH ?? '/',
   plugins: [react()],
+  // Allow Render's *.onrender.com host when serving the build via `vite preview`.
+  preview: {
+    allowedHosts: true,
+  },
   server: {
     // Proxy API calls to the Express BFF so the browser talks to one origin.
     proxy: {
