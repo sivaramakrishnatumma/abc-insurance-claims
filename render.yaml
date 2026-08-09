@@ -22,12 +22,9 @@ services:
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     envVars:
-      # Point the frontend at the backend service automatically.
+      # Full public URL of the API service (inlined into the build by Vite).
       - key: VITE_API_URL
-        fromService:
-          type: web
-          name: abc-claims-api
-          property: host
+        value: https://abc-claims-api.onrender.com
     routes:
       # SPA fallback so client-side routes resolve to index.html.
       - type: rewrite
