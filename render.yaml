@@ -1,0 +1,38 @@
+# Render Blueprint — deploys the Express BFF and the Vite/React frontend.
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  # ---- Backend: Express API (Web Service) ----------------------------------
+  - type: web
+    name: abc-claims-api
+    runtime: node
+    plan: free
+    rootDir: server
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      # Optional: lock CORS to the frontend origin. Leave unset to allow all.
+      - key: FRONTEND_URL
+        sync: false
+
+  # ---- Frontend: Vite build (Static Site) ----------------------------------
+  - type: web
+    name: abc-claims-web
+    runtime: static
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      # Static sites serve at root, so drop the GitHub Pages subpath.
+      - key: VITE_BASE_PATH
+        value: /
+      # Point the frontend at the backend service automatically.
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: abc-claims-api
+          property: host
+    routes:
+      # SPA fallback so client-side routes resolve to index.html.
+      - type: rewrite
+        source: /*
+        destination: /index.html

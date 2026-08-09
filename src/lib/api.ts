@@ -1,5 +1,11 @@
 import type { Claim } from '../data/mockClaims';
 
+// In dev this is empty so calls stay relative and hit the Vite proxy.
+// In production set VITE_API_URL to the deployed backend origin.
+const rawBase = import.meta.env.VITE_API_URL ?? '';
+const API_BASE =
+  rawBase && !/^https?:\/\//.test(rawBase) ? `https://${rawBase}` : rawBase;
+
 export type SortDir = 'asc' | 'desc';
 
 export interface ClaimsPage {
@@ -29,7 +35,9 @@ export async function fetchClaims(
   if (q.sortBy) params.set('sortBy', q.sortBy);
   if (q.sortOrder) params.set('sortOrder', q.sortOrder);
 
-  const res = await fetch(`/api/claims?${params.toString()}`, { signal });
+  const res = await fetch(`${API_BASE}/api/claims?${params.toString()}`, {
+    signal,
+  });
   if (!res.ok) throw new Error(`Failed to load claims (${res.status})`);
   return res.json();
 }
@@ -45,7 +53,7 @@ export interface JobStatus {
 export async function startSplitJob(
   documentId: string,
 ): Promise<{ jobId: string; status: string }> {
-  const res = await fetch(`/api/documents/${documentId}/split`, {
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}/split`, {
     method: 'POST',
   });
   if (!res.ok) throw new Error(`Failed to start split job (${res.status})`);
@@ -53,7 +61,7 @@ export async function startSplitJob(
 }
 
 export async function getJob(jobId: string): Promise<JobStatus> {
-  const res = await fetch(`/api/jobs/${jobId}`);
+  const res = await fetch(`${API_BASE}/api/jobs/${jobId}`);
   if (!res.ok) throw new Error(`Failed to fetch job (${res.status})`);
   return res.json();
 }
@@ -73,7 +81,7 @@ export async function fetchDocumentChunk(
   end: number,
   signal?: AbortSignal,
 ): Promise<{ meta: DocumentChunk; bytes: ArrayBuffer }> {
-  const res = await fetch(`/api/documents/${documentId}/stream`, {
+  const res = await fetch(`${API_BASE}/api/documents/${documentId}/stream`, {
     headers: { Range: `bytes=${start}-${end}` },
     signal,
   });

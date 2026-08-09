@@ -4,9 +4,16 @@ import { randomUUID } from 'crypto';
 import { claims, type Claim } from './data';
 
 const app = express();
-const PORT = 3001;
+const PORT = Number(process.env.PORT) || 3001;
 
-app.use(cors()); // allow the Vite app on :5173 to call this BFF
+// Restrict CORS to the deployed frontend when FRONTEND_URL is set; allow all in dev.
+const frontend = process.env.FRONTEND_URL;
+const allowedOrigin = frontend
+  ? /^https?:\/\//.test(frontend)
+    ? frontend
+    : `https://${frontend}`
+  : undefined;
+app.use(cors(allowedOrigin ? { origin: allowedOrigin } : {}));
 app.use(express.json());
 
 // ---------------------------------------------------------------------------
@@ -172,5 +179,5 @@ app.get('/api/health', (_req: Request, res: Response) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`Claims BFF listening on http://localhost:${PORT}`);
+  console.log(`Claims BFF listening on port ${PORT}`);
 });
