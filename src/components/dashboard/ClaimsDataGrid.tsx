@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import {
@@ -7,12 +7,12 @@ import {
   Pencil,
   UserPlus,
   Trash2,
-  Cpu,
+  Loader2,
 } from 'lucide-react';
 import { type Claim, type ClaimStatus } from '../../data/mockClaims';
 import { AuthorizedView, usePermissions } from '../../store/RBACContext';
-import { useClaimsProcessor } from '../../hooks/useClaimsProcessor';
-import type { SortKey } from '../../workers/claims.types';
+import { useClaims } from '../../hooks/useClaims';
+import type { SortDir } from '../../lib/api';
 import { RoleSelector } from './RoleSelector';
 
 const ROW_HEIGHT = 60;
@@ -21,12 +21,22 @@ const ROW_HEIGHT = 60;
 const GRID_COLS =
   'grid grid-cols-[minmax(0,1.5fr)_minmax(0,0.9fr)_minmax(0,1.8fr)_minmax(0,1fr)_minmax(0,0.8fr)_minmax(0,1.1fr)] items-center gap-4 px-6';
 
+type SortKey = 'newest' | 'name' | 'amount' | 'status';
+
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: 'newest', label: 'Newest' },
   { value: 'name', label: 'Name (A–Z)' },
   { value: 'amount', label: 'Amount (High–Low)' },
   { value: 'status', label: 'Status' },
 ];
+
+// Maps the UI sort choice to the server's sortBy/sortOrder params.
+const SORT_FIELDS: Record<SortKey, { sortBy: string; sortOrder: SortDir }> = {
+  newest: { sortBy: 'id', sortOrder: 'desc' },
+  name: { sortBy: 'customerName', sortOrder: 'asc' },
+  amount: { sortBy: 'amount', sortOrder: 'desc' },
+  status: { sortBy: 'status', sortOrder: 'asc' },
+};
 
 const currencyFormatter = new Intl.NumberFormat('en-US', {
   style: 'currency',
@@ -126,22 +136,66 @@ const HEADERS = [
 
 export function ClaimsDataGrid() {
   const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
   const [sortKey, setSortKey] = useState<SortKey>('newest');
   const parentRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
 
-  // Search, filter and sort run in a Web Worker to keep the UI at 60 FPS.
-  const { claims, total, activeCount, isProcessing } = useClaimsProcessor(
-    search,
-    sortKey,
+  // Debounce search so we don't hit the API on every keystroke.
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 300);
+    return () => clearTimeout(t);
+  }, [search]);
+
+  const { sortBy, sortOrder } = SORT_FIELDS[sortKey];
+  const {
+    data,
+    isLoading,
+    isError,
+    isFetching,
+    isFetchingNextPage,
+    hasNextPage,
+    fetchNextPage,
+  } = useClaims(debouncedSearch, sortBy, sortOrder);
+
+  const rows = useMemo(
+    () => (data ? data.pages.flatMap((page) => page.data) : []),
+    [data],
   );
+  const total = data?.pages[0]?.total ?? 0;
 
   const rowVirtualizer = useVirtualizer({
-    count: claims.length,
+    count: rows.length,
     getScrollElement: () => parentRef.current,
     estimateSize: () => ROW_HEIGHT,
     overscan: 12,
   });
+
+  const virtualItems = rowVirtualizer.getVirtualItems();
+
+  // Infinite scroll: fetch the next page as the last row scrolls into view.
+  useEffect(() => {
+    const last = virtualItems[virtualItems.length - 1];
+    if (
+      last &&
+      last.index >= rows.length - 1 &&
+      hasNextPage &&
+      !isFetchingNextPage
+    ) {
+      fetchNextPage();
+    }
+  }, [
+    virtualItems,
+    rows.length,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  ]);
+
+  // Reset scroll to the top whenever the query changes.
+  useEffect(() => {
+    parentRef.current?.scrollTo({ top: 0 });
+  }, [debouncedSearch, sortKey]);
 
   return (
     <section className='rounded-3xl bg-white p-6 shadow-card'>
@@ -150,12 +204,12 @@ export function ClaimsDataGrid() {
         <div>
           <h2 className='text-lg font-bold text-slate-900'>All Claims</h2>
           <p className='mt-0.5 text-sm font-medium text-emerald-500'>
-            {activeCount.toLocaleString()} Active Members
+            {total.toLocaleString()} claims found
           </p>
-          {isProcessing && (
+          {isFetching && !isLoading && (
             <p className='mt-1 flex items-center gap-1 text-xs text-slate-400'>
-              <Cpu className='h-3 w-3' />
-              Processing in Web Worker…
+              <Loader2 className='h-3 w-3 animate-spin' />
+              Syncing with server…
             </p>
           )}
         </div>
@@ -209,7 +263,7 @@ export function ClaimsDataGrid() {
 
       {/* Virtualized rows */}
       <div ref={parentRef} className='scrollbar-thin h-[600px] overflow-y-auto'>
-        {isProcessing && claims.length === 0 ? (
+        {isLoading ? (
           <div>
             {Array.from({ length: 10 }).map((_, i) => (
               <div
@@ -226,9 +280,13 @@ export function ClaimsDataGrid() {
               </div>
             ))}
           </div>
-        ) : claims.length === 0 ? (
+        ) : isError ? (
+          <div className='grid h-full place-items-center text-sm text-rose-500'>
+            Failed to load claims. Is the API running on :3001?
+          </div>
+        ) : rows.length === 0 ? (
           <div className='grid h-full place-items-center text-sm text-slate-400'>
-            No claims match “{search}”.
+            No claims match “{debouncedSearch}”.
           </div>
         ) : (
           <div
@@ -237,8 +295,8 @@ export function ClaimsDataGrid() {
               position: 'relative',
             }}
           >
-            {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-              const claim = claims[virtualRow.index];
+            {virtualItems.map((virtualRow) => {
+              const claim = rows[virtualRow.index];
               return (
                 <div
                   key={claim.id}
@@ -283,9 +341,10 @@ export function ClaimsDataGrid() {
       </div>
 
       {/* Footer counter */}
-      <p className='mt-4 text-xs text-slate-400'>
-        Showing {claims.length.toLocaleString()} of {total.toLocaleString()}{' '}
+      <p className='mt-4 flex items-center gap-2 text-xs text-slate-400'>
+        Showing {rows.length.toLocaleString()} of {total.toLocaleString()}{' '}
         claims
+        {isFetchingNextPage && <Loader2 className='h-3 w-3 animate-spin' />}
       </p>
     </section>
   );

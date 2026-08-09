@@ -105,6 +105,7 @@ export function DocumentWorkspace() {
         <div className='w-[65%] overflow-hidden'>
           <DocumentViewer
             document={document}
+            claimId={claim.id}
             currentPage={currentPage}
             onPageChange={setCurrentPage}
           />
@@ -143,7 +144,7 @@ export function DocumentWorkspace() {
             {tab === 'comments' ? (
               <CommentsPanel currentPage={currentPage} />
             ) : (
-              <PageActionsPanel currentPage={currentPage} />
+              <PageActionsPanel currentPage={currentPage} claimId={claim.id} />
             )}
           </div>
         </div>

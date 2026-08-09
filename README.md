@@ -1,10 +1,10 @@
 # ABC Insurance — Claims Processing UI
 
 > **RFC / System Design Document** for a scalable, high-performance claims
-> processing front-end. This is a Proof of Concept (PoC): the UI and
-> client-side architecture are real and runnable; the backend is mocked.
+> processing front-end. This is a Proof of Concept (PoC): the React UI is
+> real and runnable, backed by a bundled lightweight Express BFF (mock backend).
 
-**Status:** PoC · **Author:** Senior UI/Frontend Architect · **Last updated:** 2026-08-08
+**Status:** PoC · **Author:** Siva Rama Krishna · **Last updated:** 2026-08-08
 
 ---
 
@@ -34,7 +34,9 @@ See [`docs/architecture.md`](docs/architecture.md) for diagrams.
 | Tooling        | **Vite**                    | Instant HMR, first-class `new URL(...)` **Web Worker** bundling, fast module resolution. |
 | Styling        | **Tailwind CSS**            | Rapid, token-driven styling that maps 1:1 to Figma.                                      |
 | Virtualization | **@tanstack/react-virtual** | Headless, tiny, keeps ~30 rows in the DOM.                                               |
-| Server cache   | **@tanstack/react-query**   | Cursor pagination + caching (wired for the real API).                                    |
+| Server cache   | **@tanstack/react-query**   | Backs the grid via an infinite query over cursor-paginated pages.                        |
+| Backend (mock) | **Express + TypeScript**    | Bundled BFF: pagination, RBAC-shaped routes, Range streaming, split jobs.                |
+| Persistence    | **IndexedDB**               | Caches streamed 1 GB-file page chunks off the JS heap.                                   |
 | Icons          | **lucide-react**            | Consistent, tree-shakeable icon set.                                                     |
 | Routing        | **react-router-dom**        | Full-page workspace route unmounts the grid to free memory.                              |
 
@@ -51,7 +53,7 @@ re-renders — critical when 20k rows are in memory.
 | Tier             | Tool                                                                     | Owns                                                                                                                  |
 | :--------------- | :----------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------- |
 | **Global**       | Context/Store ([`src/store/RBACContext.tsx`](src/store/RBACContext.tsx)) | Current user role + `hasPermission`. In production: also active Claim Case ID and app config (Zustand/Redux Toolkit). |
-| **Server cache** | React Query                                                              | Claims pages, claim detail — cursor-based pagination cache.                                                           |
+| **Server cache** | React Query                                                              | Claims pages via `useInfiniteQuery` over the BFF (cursor pagination).                                                 |
 | **Local**        | React state                                                              | Grid **viewport** (virtualizer), `search`/`sortKey`, workspace page/zoom/tab, optimistic comments.                    |
 
 Keeping the grid **viewport** local means scrolling never touches global state,
@@ -87,21 +89,20 @@ viewport exist in the DOM ([`ClaimsDataGrid.tsx`](src/components/dashboard/Claim
 via `useVirtualizer`). Memory footprint stays near-constant regardless of row
 count.
 
-### B.2 Avoiding Main-Thread Jank
+### B.2 Where the Heavy Work Runs
 
-Sorting/filtering 20k objects (`localeCompare`, etc.) on the main thread drops
-frames. We offload **search + filter + sort** to a **Web Worker**
-([`claimsWorker.ts`](src/workers/claimsWorker.ts)) behind the
-[`useClaimsProcessor`](src/hooks/useClaimsProcessor.ts) hook, using a typed
-request/response contract and a monotonic `requestId` to discard stale results.
-The UI stays at 60 FPS while typing.
+Sorting/filtering 20k objects on the main thread drops frames — so the client
+doesn't do it at all. **Search, filter and sort run on the server** (the bundled
+Express BFF); the grid consumes them through a React Query **infinite query**
+([`useClaims`](src/hooks/useClaims.ts)) and only ever holds the pages it has
+scrolled. Search is debounced (300 ms); the main thread never touches 20k rows.
 
-### B.3 Data Fetching (Production)
+### B.3 Data Fetching (Implemented)
 
-Propose **cursor-based server-side pagination** + **infinite scroll** feeding
-the virtualizer (windowed rendering), cached by React Query. The same
-`ProcessRequest` worker contract can be swapped for an API call with **zero grid
-changes**.
+Cursor-style **server-side pagination** (`page`/`limit`) with server-side search
+and sort, consumed via `useInfiniteQuery` and fed into the virtualizer — the
+next page is fetched as the last row scrolls into view. Row actions still mask
+in the UI via RBAC while the backend remains the source of truth.
 
 ### B.4 Trade-Offs Analysis
 
@@ -120,18 +121,21 @@ pagination behind it for production scale.
 
 Loading a 1 GB file into memory freezes the tab. Strategy:
 
-1. **Chunked loading & streaming** — fetch via **HTTP Range Requests**
-   (`Range: bytes=0-1048576`), pulling only what the viewport needs.
-2. **Web Workers** — offload parse/split/merge of binary data to a background
-   thread ([`documentProcessor.worker.ts`](src/workers/documentProcessor.worker.ts)),
-   keeping the main thread at 60 FPS. The PoC simulates a 1 GB job streaming
-   progress ticks back to the UI.
-3. **Client-side PDF rendering** — with PDF.js + Canvas, render pages **lazily**;
-   only pages in the viewport render (page-level virtualization). The PoC mocks
-   the page canvas + Page X of Y + zoom.
-4. **Optimistic vs. Pessimistic updates**:
+1. **Chunked loading & streaming (implemented)** — [`useDocumentStream`](src/hooks/useDocumentStream.ts)
+   issues **HTTP Range requests** (`Range: bytes=…`) to the BFF, one ~1 MB slice
+   per page, receiving `206 Partial Content`.
+2. **IndexedDB cache (implemented)** — streamed chunks are stored in
+   **IndexedDB** ([`idbCache.ts`](src/lib/idbCache.ts)); revisited pages load
+   from cache, keeping large binary data off the JS heap.
+3. **Web Workers (implemented)** — Merge/Rotate/Delete run in a background worker
+   ([`documentProcessor.worker.ts`](src/workers/documentProcessor.worker.ts)),
+   while **Split** runs as a real server job (`POST …/split` + poll `/jobs/:id`).
+   The main thread stays at 60 FPS.
+4. **Client-side PDF rendering (planned)** — with PDF.js + Canvas, render pages
+   **lazily**; only viewport pages render. The PoC renders a styled mock page.
+5. **Optimistic vs. Pessimistic updates**:
    - **Pessimistic** for Split/Merge/Delete — real progress bars, actions blocked
-     until the worker completes ([`PageActionsPanel.tsx`](src/components/workspace/PageActionsPanel.tsx)).
+     until completion ([`PageActionsPanel.tsx`](src/components/workspace/PageActionsPanel.tsx)).
    - **Optimistic** for Comments/Annotations — the UI updates instantly and
      rolls back on failure ([`CommentsPanel.tsx`](src/components/workspace/CommentsPanel.tsx)).
 
@@ -143,12 +147,15 @@ and giving document operations the full viewport.
 
 ## Proof of Concept — What's Implemented
 
-- ✅ Virtualized 20k-row claims grid with instant search/sort (worker-powered).
+- ✅ Virtualized 20k-row grid backed by a **server-side paginated** API (React
+  Query infinite query) with debounced server search/sort.
 - ✅ RBAC masking with a live Adjudicator/Viewer toggle.
 - ✅ Full-page master–detail Document Workspace with a smooth route transition.
-- ✅ Two Web Workers (dataset processing + 1 GB document processing) sharing a
-  typed message contract.
-- ✅ Optimistic comments + pessimistic page operations with progress.
+- ✅ Document pages streamed via **HTTP Range requests** and cached in
+  **IndexedDB** (off-heap).
+- ✅ **Split** as a real server job; Merge/Rotate/Delete in a Web Worker;
+  optimistic comments with rollback.
+- ✅ Bundled **Express BFF** (pagination, Range streaming, split jobs).
 - ✅ Tailwind styling mapped to the Figma design language.
 
 ---
@@ -159,13 +166,15 @@ and giving document operations the full viewport.
 abc-insurance-claims/
 ├── .github/                # CI workflow + PR template
 ├── docs/                   # Architecture diagrams (Mermaid)
+├── server/                 # Express BFF (pagination, Range streaming, jobs)
 ├── src/
 │   ├── components/         # UI (layout, dashboard, workspace)
-│   ├── hooks/              # useClaimsProcessor (worker bridge)
+│   ├── hooks/              # useClaims, useDocumentStream
+│   ├── lib/                # API client + IndexedDB cache
 │   ├── pages/              # DashboardPage, DocumentWorkspace
-│   ├── store/             # RBAC context / access control
-│   ├── workers/            # claimsWorker + documentProcessor.worker
-│   ├── data/               # Mock claims + document generators
+│   ├── store/              # RBAC context / access control
+│   ├── workers/            # documentProcessor.worker
+│   ├── data/               # Mock claim/document generators + types
 │   └── types/              # Shared types
 ├── README.md               # This document
 └── package.json
@@ -174,8 +183,12 @@ abc-insurance-claims/
 ## Getting Started
 
 ```bash
+# API — terminal 1
+cd server && npm install && npm run dev   # http://localhost:3001
+
+# App — terminal 2
 npm install
-npm run dev      # http://localhost:5173
+npm run dev      # http://localhost:5173  (proxies /api → :3001)
 npm run lint
 npm run build
 ```
@@ -184,8 +197,8 @@ npm run build
 
 ## Future Work
 
-- Replace mock generators with React Query + cursor pagination against the real
-  API.
-- Integrate PDF.js Canvas rendering with viewport page virtualization.
-- Wire Range-request streaming into the document worker.
+- Serve a real linearized PDF and render it with **PDF.js + Canvas** (viewport
+  page virtualization) instead of the mock page.
+- Real auth: issue/verify **JWTs** and enforce RBAC on every BFF route.
+- Push **job completion over WebSockets** instead of polling `/jobs/:id`.
 - Promote the RBAC context to Zustand and add the global active Claim Case ID.

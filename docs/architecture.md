@@ -7,34 +7,34 @@ diagrams render natively on GitHub via Mermaid.
 
 ## 1. System Flow (High Level)
 
-How a request travels from the user through the app shell to the two background
-worker threads.
+How a request flows from the UI through the app shell to the Express BFF, the
+IndexedDB cache, and the document worker.
 
 ```mermaid
 flowchart LR
   subgraph Browser["Browser Tab"]
     subgraph Main["Main Thread (UI, 60 FPS)"]
       UI["React 18 + Router"]
-      Grid["Virtualized Claims Grid<br/>(@tanstack/react-virtual)"]
+      Grid["Virtualized Claims Grid<br/>(react-virtual + React Query)"]
       WS["Document Workspace<br/>(master–detail, full page)"]
-      Store["RBAC Store + React Query cache"]
+      Store["RBAC Store"]
+      IDB["IndexedDB<br/>(page-chunk cache)"]
     end
-    subgraph Workers["Web Worker Threads"]
-      W1["claimsWorker<br/>search / filter / sort 20k"]
-      W2["documentProcessor.worker<br/>split / merge / chunk (1 GB)"]
+    subgraph Workers["Web Worker Thread"]
+      W2["documentProcessor.worker<br/>merge / rotate / delete"]
     end
   end
 
-  API["Backend API<br/>(JWT-secured)"]
-  Blob["Object Storage<br/>(Range requests)"]
+  BFF["Express BFF (:3001)<br/>/api/claims · /stream · /split · /jobs"]
 
   UI --> Grid
   UI --> WS
   UI --> Store
-  Grid <-->|postMessage / onmessage| W1
-  WS <-->|postMessage / onmessage| W2
-  Store -.->|cursor pagination| API
-  WS -.->|Range: bytes=…| Blob
+  Grid -.->|cursor pagination| BFF
+  WS <-->|postMessage| W2
+  WS <-->|get / put chunk| IDB
+  WS -.->|Range: bytes=…| BFF
+  WS -.->|POST /split · poll /jobs| BFF
 ```
 
 ---
@@ -72,13 +72,17 @@ flowchart TB
   Dash --> Cards["dashboard/SummaryCards"]
   Dash --> DGrid["dashboard/ClaimsDataGrid"]
   DGrid --> Role["dashboard/RoleSelector"]
-  DGrid --> Hook["hooks/useClaimsProcessor"]
-  Hook --> CW["workers/claimsWorker"]
+  DGrid --> Hook["hooks/useClaims (React Query)"]
+  Hook --> BFF["BFF GET /api/claims"]
 
   Work --> Viewer["workspace/DocumentViewer"]
+  Viewer --> Stream["hooks/useDocumentStream"]
+  Stream --> IDB["lib/idbCache (IndexedDB)"]
+  Stream --> BFFS["BFF /stream (Range)"]
   Work --> Comments["workspace/CommentsPanel (optimistic)"]
   Work --> Actions["workspace/PageActionsPanel (pessimistic)"]
   Actions --> DW["workers/documentProcessor.worker"]
+  Actions --> BFFJ["BFF /split + /jobs"]
 ```
 
 ---
@@ -90,8 +94,11 @@ flowchart LR
   subgraph Global["Global — Context/Store"]
     R["currentRole + hasPermission"]
   end
-  subgraph Server["Server Cache — React Query (planned)"]
-    Q["claims pages / claim detail"]
+  subgraph Server["Server Cache — React Query"]
+    Q["claims pages (infinite query)"]
+  end
+  subgraph Persist["Persistence — IndexedDB"]
+    IDB["document page chunks"]
   end
   subgraph Local["Local — component state"]
     V["grid viewport (virtualizer)"]
@@ -102,6 +109,7 @@ flowchart LR
 
   R --> UI[UI render]
   Q --> UI
+  IDB --> UI
   V --> UI
   S --> UI
   P --> UI
@@ -116,16 +124,18 @@ flowchart LR
 sequenceDiagram
   participant U as User
   participant C as PageActionsPanel (Main)
-  participant W as documentProcessor.worker
+  participant B as Express BFF
 
   U->>C: Click "Split PDF"
   C->>C: setActiveOp, disable siblings (pessimistic)
-  C->>W: postMessage { action, fileName, sizeBytes: 1 GB }
-  loop every tick
-    W-->>C: { status: PROGRESS, progress }
+  C->>B: POST /api/documents/:id/split
+  B-->>C: 202 { jobId }
+  loop poll every 400ms
+    C->>B: GET /api/jobs/:jobId
+    B-->>C: { progress, status }
     C->>C: update progress bar
   end
-  W-->>C: { status: COMPLETE, payload }
+  B-->>C: { status: COMPLETED, resultFiles }
   C->>C: show result, re-enable actions
-  Note over C,W: worker.terminate() on unmount
+  Note over C: Cancel stops polling. Merge, Rotate and Delete use the worker
 ```

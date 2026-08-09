@@ -6,11 +6,17 @@ import {
   ZoomOut,
   MessageSquarePlus,
   Highlighter,
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
+  Database,
 } from 'lucide-react';
 import type { ClaimDocument } from '../../data/mockDocument';
+import { useDocumentStream } from '../../hooks/useDocumentStream';
 
 interface DocumentViewerProps {
   document: ClaimDocument;
+  claimId: string;
   currentPage: number;
   onPageChange: (page: number) => void;
 }
@@ -19,8 +25,15 @@ const MIN_ZOOM = 50;
 const MAX_ZOOM = 200;
 const ZOOM_STEP = 10;
 
+function formatBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} B`;
+}
+
 export function DocumentViewer({
   document,
+  claimId,
   currentPage,
   onPageChange,
 }: DocumentViewerProps) {
@@ -29,6 +42,13 @@ export function DocumentViewer({
 
   const totalPages = document.pages.length;
   const page = document.pages[currentPage - 1];
+
+  // Actually stream this page's bytes from the BFF (HTTP Range request).
+  const { loading, error, chunk, source } = useDocumentStream(
+    claimId,
+    currentPage,
+    totalPages,
+  );
 
   const goPrev = () => onPageChange(Math.max(1, currentPage - 1));
   const goNext = () => onPageChange(Math.min(totalPages, currentPage + 1));
@@ -104,6 +124,35 @@ export function DocumentViewer({
         </div>
       </div>
 
+      {/* Streaming status — proves the page bytes come from the server */}
+      <div className='flex items-center gap-2 border-b border-slate-200 bg-white px-4 py-1.5 text-[11px]'>
+        {loading ? (
+          <span className='flex items-center gap-1.5 text-slate-400'>
+            <Loader2 className='h-3 w-3 animate-spin' />
+            Streaming page {currentPage} from server…
+          </span>
+        ) : error ? (
+          <span className='flex items-center gap-1.5 text-rose-500'>
+            <AlertTriangle className='h-3 w-3' />
+            Stream failed: {error}
+          </span>
+        ) : chunk ? (
+          source === 'cache' ? (
+            <span className='flex items-center gap-1.5 text-brand-600'>
+              <Database className='h-3 w-3' />
+              Loaded {formatBytes(chunk.chunkSize)} from IndexedDB cache ·{' '}
+              {chunk.contentRange}
+            </span>
+          ) : (
+            <span className='flex items-center gap-1.5 text-emerald-600'>
+              <CheckCircle2 className='h-3 w-3' />
+              Streamed {formatBytes(chunk.chunkSize)} from server ·{' '}
+              {chunk.contentRange}
+            </span>
+          )
+        ) : null}
+      </div>
+
       {/* Page canvas */}
       <div className='scrollbar-thin flex-1 overflow-auto p-8'>
         <div
@@ -147,6 +196,16 @@ export function DocumentViewer({
               </div>
               <div className='absolute left-6 top-[16.5rem] h-4 w-4 -translate-x-1/2 rounded-full border-2 border-white bg-rose-500 shadow' />
             </>
+          )}
+
+          {/* Loading overlay while the page streams from the server */}
+          {loading && (
+            <div className='absolute inset-0 grid place-items-center bg-white/70 backdrop-blur-sm'>
+              <span className='flex items-center gap-2 text-sm font-medium text-slate-500'>
+                <Loader2 className='h-5 w-5 animate-spin text-brand-500' />
+                Loading page from server…
+              </span>
+            </div>
           )}
         </div>
       </div>

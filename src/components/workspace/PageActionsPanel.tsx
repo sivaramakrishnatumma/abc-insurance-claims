@@ -17,9 +17,11 @@ import type {
   DocumentWorkerRequest,
   DocumentWorkerResponse,
 } from '../../workers/documentProcessor.types';
+import { startSplitJob, getJob } from '../../lib/api';
 
 interface PageActionsPanelProps {
   currentPage: number;
+  claimId: string;
 }
 
 interface PageOperation {
@@ -77,7 +79,10 @@ function actionFor(opId: string): DocumentActionType {
   return 'PROCESS_CHUNK';
 }
 
-export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
+export function PageActionsPanel({
+  currentPage,
+  claimId,
+}: PageActionsPanelProps) {
   const { hasPermission } = usePermissions();
   const [activeOp, setActiveOp] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -85,6 +90,8 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [lastOp, setLastOp] = useState<PageOperation | null>(null);
   const workerRef = useRef<Worker | null>(null);
+  // Interval id for polling the server split job.
+  const pollRef = useRef<number | null>(null);
   // Holds the op currently running so the worker's onmessage can resolve it.
   const activeOpRef = useRef<PageOperation | null>(null);
 
@@ -129,8 +136,43 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
   useEffect(() => {
     const worker = attachWorker();
     // Terminate on unmount to avoid leaking the worker thread.
-    return () => worker.terminate();
+    return () => {
+      worker.terminate();
+      if (pollRef.current) clearInterval(pollRef.current);
+    };
   }, [attachWorker]);
+
+  // "Split PDF" runs as a real BFF job: POST to start, then poll for progress.
+  const runServerSplit = async (op: PageOperation) => {
+    try {
+      const { jobId } = await startSplitJob(claimId);
+      pollRef.current = window.setInterval(async () => {
+        try {
+          const job = await getJob(jobId);
+          setProgress(job.progress);
+          if (job.status === 'COMPLETED') {
+            if (pollRef.current) clearInterval(pollRef.current);
+            pollRef.current = null;
+            setActiveOp(null);
+            activeOpRef.current = null;
+            setCompleted(
+              `${op.label} completed — ${job.resultFiles ?? 12} files (server job)`,
+            );
+          }
+        } catch {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          setActiveOp(null);
+          activeOpRef.current = null;
+          setError('Operation failed due to server timeout');
+        }
+      }, 400);
+    } catch {
+      setActiveOp(null);
+      activeOpRef.current = null;
+      setError('Operation failed due to server timeout');
+    }
+  };
 
   const runOperation = (op: PageOperation) => {
     if (activeOpRef.current) return;
@@ -141,7 +183,12 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
     activeOpRef.current = op;
     setLastOp(op);
 
-    // Offload the heavy job to the worker; the main thread stays at 60 FPS.
+    // Split runs as a real server job; other heavy ops stay on the worker.
+    if (op.id === 'split') {
+      void runServerSplit(op);
+      return;
+    }
+
     const request: DocumentWorkerRequest = {
       action: actionFor(op.id),
       fileName: `page-${currentPage}.pdf`,
@@ -150,10 +197,17 @@ export function PageActionsPanel({ currentPage }: PageActionsPanelProps) {
     workerRef.current?.postMessage(request);
   };
 
-  // Safe cancel: kill the running worker and spin up a clean replacement.
+  // Safe cancel: stop the running job (server poll or worker) and reset.
   const cancelOperation = () => {
-    workerRef.current?.terminate();
-    attachWorker();
+    if (activeOpRef.current?.id === 'split') {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    } else {
+      workerRef.current?.terminate();
+      attachWorker();
+    }
     activeOpRef.current = null;
     setActiveOp(null);
     setProgress(0);
